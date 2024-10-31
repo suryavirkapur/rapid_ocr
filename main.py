@@ -1,3 +1,4 @@
+import os
 import asyncio
 import argparse
 import cv2
@@ -5,12 +6,8 @@ from datetime import datetime
 import gc
 import json
 import numpy as np
-import os
-from rapidocr_paddle import RapidOCR
-from robyn import Robyn, Request
 from tempfile import NamedTemporaryFile
 import time
-import torch
 from dotenv import load_dotenv
 from PIL import Image
 import requests
@@ -20,6 +17,14 @@ import atexit
 
 # Load environment variables
 load_dotenv(override=True)
+
+if 'CUDA_PATH' in os.environ:
+    os.add_dll_directory(os.path.join(os.environ['CUDA_PATH'], 'bin'))
+
+import torch
+
+from rapidocr_onnxruntime import RapidOCR
+from robyn import Robyn, Request
 
 app = Robyn(__file__)
 
@@ -118,8 +123,9 @@ engine_locks = [asyncio.Lock() for _ in range(NUM_ENGINES)]
 
 def serialize_ocr_result(result):
     if result is None:
-        return []
-    return [
+        return {"detailed": [], "text": ""}
+    
+    detailed = [
         {
             "bounding_box": [[float(coord) for coord in coords if coord is not None] for coords in item[0] if coords],
             "text": str(item[1]) if item[1] is not None else "",
@@ -127,6 +133,14 @@ def serialize_ocr_result(result):
         }
         for item in result if item is not None
     ]
+    
+    # Extract and combine text in reading order
+    text = ' '.join([item["text"] for item in detailed])
+    
+    return {
+        "detailed": detailed,
+        "text": text
+    }
 
 def preprocess_image(image_content):
     image = cv2.imdecode(np.frombuffer(image_content, np.uint8), cv2.IMREAD_COLOR)
@@ -195,7 +209,7 @@ async def perform_ocr(request: Request):
             result = await run_ocr(file_content, engine)
         gc.collect()                
         print(f"Finished processing request for OCR")
-        return {"result": result}
+        return result  # Now returns both detailed and text versions
 
     except Exception as e:
         print(f"Error during OCR processing: {e}")
